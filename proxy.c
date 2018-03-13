@@ -1,11 +1,13 @@
 #include <stdio.h>
 #include "csapp.h"
+#include "sbuf.h"
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
 #define NUM_OF_THREADS 2
+#define SBUFFSIZE 3
 #define	MAXLINE	 8192  /* Max text line length */
 #define MAXBUF   8192  /* Max I/O buffer size */
 typedef struct sockaddr SA;
@@ -22,14 +24,17 @@ typedef struct {
 	int server_fd;
 }request_t;
 
+sbuf_t sbuf;//The buffer for our connections
+
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 int handle_server_request(int connfd,request_t *request);
 int parse_request(request_t *request,char *buff);
 int send_request(int connfd,char *buff, rio_t rio, request_t  *req);
-void Cclose(int serverfd, int clientfd,char *host,char *port);
+void Cclose(int serverfd, int clientfd);
 int handle_response(int server_fd,int clientfd);
 int read_response(rio_t *rio, int content_size,char *buf,int clientfd);
+void *thread(void *vargp);
 
 
 
@@ -42,6 +47,7 @@ int main(int argc, char **argv)
 	struct sockaddr_storage clientaddr;
 	//ignore SIGPIPE
 	Signal(SIGPIPE,SIG_IGN);
+	pthread_t tid;//tid for threads
 
 	/* Check command line args */
 	if (argc != 2) {
@@ -58,53 +64,19 @@ int main(int argc, char **argv)
 	}
 	else{
 		listenfd = Open_listenfd(argv[1]);
-		/*for(int i =0; i < NUM_OF_THREADS; i++){
-			//create threads
-		}*/
-
+		sbuf_init(&sbuf,SBUFFSIZE);
+		for(int i =0; i < NUM_OF_THREADS; i++){
+			Pthread_create(&tid,NULL,thread,NULL);
+		}
+		//Then as we get connections hook them up with the threads
+		//have threads go to a function that detaches them and handles requests
 		if(!(listenfd < 0)){
 			while (1) {
-				//Parts of the Request/etc
-				request_t request;
 				clientlen = sizeof(clientaddr);
 				connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
-				//gets the name info
-				Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
-						port, MAXLINE, 0);
-				printf("Accepted connection from (%s, %s)\n", hostname, port);
 				//sleep(10);
-				//line:netp:tiny:doit
-				//take request we recieved and parse it. Determine if valid. If it is then:
-				//Proxy then opens a connection to the host given and sends an HTTP request of
-				//my own for the object client wanted
-
-
-				int val;
-				if((val = handle_server_request(connfd,&request)) < 0){
-					if(val == -4){
-						fprintf(stderr,"Only Get request supported");
-
-					}
-					else{
-						fprintf(stderr,"An error occurred in handling request");
-					}
-					Cclose(request.server_fd,connfd,hostname,port);
-					//return val;
-				}
-				//if everything worked
-				else if(val == 0 && handle_response(request.server_fd,connfd) < 0){
-					if(val == -3){
-						fprintf(stderr,"An error while writing to client");
-					}
-					else{
-						fprintf(stderr,"An error occurred in reading from server");
-					}
-					Cclose(request.server_fd,connfd,hostname,port);
-					//return val;
-				}
-				else{
-					Cclose(request.server_fd,connfd,hostname,port);
-				}
+				//fprintf(stdout,"inserting fd:%d\n",connfd);
+				sbuf_insert(&sbuf,connfd);
 				//Seperate the hostname/query and all else.
 				//Then read response and forward it to the client
 				//something like GET "query that was sent to me" HTTP/1.0\r\n (so send them everything after the hostname, though make sure
@@ -122,6 +94,48 @@ int main(int argc, char **argv)
 	}
 	//Cclose(request.server_fd,connfd,hostname,port);
 	return 0;
+}
+void *thread(void *vargp){
+	//Parts of the Request/etc
+	request_t request;
+	//sleep(10);
+	Pthread_detach(pthread_self());
+	//sleep(10);
+	/*//gets the name info
+	Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
+			port, MAXLINE, 0);*/
+	//printf("Accepted connection from (%s, %s)\n", hostname, port);
+	while(1){
+		int connfd = sbuf_remove(&sbuf);
+		int val;
+		if((val = handle_server_request(connfd,&request)) < 0){
+			if(val == -4){
+				fprintf(stderr,"Only Get request supported");
+
+			}
+			else{
+				fprintf(stderr,"An error occurred in handling request");
+			}
+			Cclose(request.server_fd,connfd);
+			//return val;
+		}
+		//if everything worked
+		else if(val == 0 && handle_response(request.server_fd,connfd) < 0){
+			if(val == -3){
+				fprintf(stderr,"An error while writing to client");
+			}
+			else{
+				fprintf(stderr,"An error occurred in reading from server");
+			}
+			Cclose(request.server_fd,connfd);
+			//return val;
+		}
+		else{
+			Cclose(request.server_fd,connfd);
+		}
+	}
+	Pthread_exit(NULL);
+	return NULL;
 }
 
 int handle_response(int serverfd,int clientfd){
@@ -322,15 +336,17 @@ int parse_request(request_t *request,char *buff){
 	request->server_fd = -1;
 	//get the host name
 	char *t = strstr(request->url,"://");
-	t+=3;
-	sscanf(t,"%[^/|^:]",request->host);
+	if(t != NULL){
+		t+=3;
+		sscanf(t,"%[^/|^:]",request->host);
+	}
 	//reset buff
 	memset(buff,0,sizeof(char)*strlen(buff));
 	return 0;
 }
 
-void Cclose(int serverfd, int clientfd,char *host,char *port){
-	fprintf(stdout,"Closed connections: (%s,%d)\n",host,port);
+void Cclose(int serverfd, int clientfd){
+	//fprintf(stdout,"Closed connections: (Server:%s,Client:%d)\n",serverfd,clientfd);
 	if(serverfd >= 0){
 		Close(serverfd);
 		serverfd = NULL;
