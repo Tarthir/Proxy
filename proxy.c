@@ -13,7 +13,7 @@
 typedef struct sockaddr SA;
 
 
-typedef struct {
+/*typedef struct {
 	char method[MAXLINE];
 	char port[MAXLINE];
 	char url[MAXLINE];
@@ -22,17 +22,17 @@ typedef struct {
 	char version[MAXLINE];
 	char host[MAXLINE];
 	int server_fd;
-}request_t;
+}request_t;*/
 
 sbuf_t sbuf;//The buffer for our connections
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-int handle_server_request(int connfd,request_t *request);
-int parse_request(request_t *request,char *buff);
-int send_request(int connfd,char *buff, rio_t rio, request_t  *req);
+int handle_server_request(int connfd, int *server_fd);
+int get_request(char *buff,char *port,char *resource,char *method,char *protocol,char *version,char *host);
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *method,char *protocol,char *version,char *host,int *server_fd);
 void Cclose(int serverfd, int clientfd);
-int handle_response(int server_fd,int clientfd);
+int handle_response(int *server_fd,int clientfd);
 int read_response(rio_t *rio, int content_size,char *buf,int clientfd);
 void *thread(void *vargp);
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 {
 	//char port;
 	int listenfd, connfd;
-	char hostname[MAXLINE], port[MAXLINE];
+	//char hostname[MAXLINE], port[MAXLINE];
 	socklen_t clientlen;
 	struct sockaddr_storage clientaddr;
 	//ignore SIGPIPE
@@ -55,11 +55,11 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	else if(argv[1] < 0){
-		fprintf(stderr, "usage: %s%s\n <port>\n", argv[0],"Ports are numbers > 0");
+		fprintf(stderr, "usage: %s%s\n <port>\n", argv[0],"Ports are numbers > 0\n");
 		exit(1);
 	}
 	else if(atoi(argv[1]) <= 0){
-		fprintf(stderr,"Bro...ports are numbers..duh");
+		fprintf(stderr,"Bro...ports are numbers..duh\n");
 		exit(1);
 	}
 	else{
@@ -74,6 +74,10 @@ int main(int argc, char **argv)
 			while (1) {
 				clientlen = sizeof(clientaddr);
 				connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); //line:netp:tiny:accept
+				/*Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE,
+							port, MAXLINE, 0);*/
+				//fprintf(stdout,"Connected to: %s on port %s",hostname,port);
+				//fflush(stdout);
 				//sleep(10);
 				//fprintf(stdout,"inserting fd:%d\n",connfd);
 				sbuf_insert(&sbuf,connfd);
@@ -88,7 +92,7 @@ int main(int argc, char **argv)
 		}
 		else{
 			//error listening to port
-			fprintf(stderr, "port being used");
+			fprintf(stderr, "port being used\n");
 			exit(1);
 		}
 	}
@@ -97,7 +101,6 @@ int main(int argc, char **argv)
 }
 void *thread(void *vargp){
 	//Parts of the Request/etc
-	request_t request;
 	//sleep(10);
 	Pthread_detach(pthread_self());
 	//sleep(10);
@@ -106,44 +109,52 @@ void *thread(void *vargp){
 			port, MAXLINE, 0);*/
 	//printf("Accepted connection from (%s, %s)\n", hostname, port);
 	while(1){
-		int connfd = sbuf_remove(&sbuf);
-		int val;
-		if((val = handle_server_request(connfd,&request)) < 0){
-			if(val == -4){
-				fprintf(stderr,"Only Get request supported");
+		//request_t request;
 
-			}
-			else{
-				fprintf(stderr,"An error occurred in handling request");
-			}
-			Cclose(request.server_fd,connfd);
-			//return val;
-		}
-		//if everything worked
-		else if(val == 0 && handle_response(request.server_fd,connfd) < 0){
-			if(val == -3){
-				fprintf(stderr,"An error while writing to client");
-			}
-			else{
-				fprintf(stderr,"An error occurred in reading from server");
-			}
-			Cclose(request.server_fd,connfd);
-			//return val;
-		}
-		else{
-			Cclose(request.server_fd,connfd);
+		int connfd = sbuf_remove(&sbuf);
+		if(connfd > 0){
+			do_server_request(connfd);
 		}
 	}
 	Pthread_exit(NULL);
 	return NULL;
 }
 
-int handle_response(int serverfd,int clientfd){
+void do_server_request(int connfd){
+	int server_fd = -1;
+	int val;
+	if((val = handle_server_request(connfd,&server_fd)) < 0){
+		if(val == -4){
+			fprintf(stderr,"Only Get request supported\n");
+
+		}
+		else{
+			fprintf(stderr,"An error occurred in handling request\n");
+		}
+		Cclose(server_fd,connfd);
+		//return val;
+	}
+	//if everything worked
+	else if(val == 0 && handle_response(&server_fd,connfd) < 0){
+		if(val == -3){
+			fprintf(stderr,"An error while writing to client\n");
+		}
+		else{
+			fprintf(stderr,"An error occurred in reading from server\n");
+		}
+		Cclose(server_fd,connfd);
+		//return val;
+	}
+	/*else{
+		Cclose(server_fd,connfd);
+	}*/
+}
+int handle_response(int *serverfd,int clientfd){
 	rio_t rio;
-	char buf[MAXLINE];
+	char buf[MAXLINE];//THIS VARIABLE is not safe, it holds the last request for some reason
 	int content_size;
 	//init the struct
-	Rio_readinitb(&rio,serverfd);
+	Rio_readinitb(&rio,(*serverfd));
 	//grab first line
 	if(Rio_readlineb(&rio,buf,MAXLINE) < 0){
 		return -1;
@@ -163,6 +174,9 @@ int handle_response(int serverfd,int clientfd){
 				//grab the content size
 				if(strstr(buf,"Content-Length")){
 					sscanf(buf,"Content-Length: %d",&content_size);
+				}
+				else if(strstr(buf,"Content-length")){
+					sscanf(buf,"Content-length: %d",&content_size);
 				}
 			}
 			if(Rio_writen(clientfd,buf,strlen(buf)) < 0){
@@ -189,10 +203,10 @@ int read_response(rio_t *rio, int content_size,char *buf,int clientfd){
 			}
 		}
 		if(content_size > 0){
-			if(Rio_readnb(rio,buf,MAXLINE) < 0){
+			if(Rio_readnb(rio,buf,content_size) < 0){
 				return -1;
 			}
-			else if(Rio_writen(clientfd,buf,num) < 0){
+			else if(Rio_writen(clientfd,buf,content_size) < 0){
 				return -1;
 			}
 		}
@@ -208,28 +222,34 @@ int read_response(rio_t *rio, int content_size,char *buf,int clientfd){
 	return 0;
 }
 
-int handle_server_request(int connfd, request_t *request){
+int handle_server_request(int connfd, int *server_fd){
 	//Holds the request
 	char buff[MAXLINE];
+	char port[MAXLINE];
+	char resource[MAXLINE];
+	char method[MAXLINE];
+	char host[MAXLINE];
 	rio_t rio;
 
 	Rio_readinitb(&rio,connfd);
 	if(Rio_readlineb(&rio,buff,MAXLINE) < 0){
-		fprintf(stderr,"An error accord in handle_request");
+		fprintf(stderr,"An error accord in handle_request\n");
 		return -1;
 	}
 	else{
 
 		//EX: GET http://www.cmu.edu/hub/index.html HTTP/1.0
-		if(parse_request(request,buff) < 0){
-			fprintf(stderr,"An error accord in parse_request");
+		char protocol[MAXLINE];
+		char version[MAXLINE];
+		if(get_request(buff,port,resource,method,protocol,version,host) < 0){
+			fprintf(stderr,"An error accord in parse_request\n");
 			return -1;
 		}
-		else if(strstr(request->method,"GET") != NULL){
-			return send_request(connfd,buff,rio,request);
+		else if(strstr(method,"GET") != NULL){
+			return send_request(connfd,buff,rio,port,resource,method,protocol,version,host,server_fd);
 		}
 		else{
-			fprintf(stderr,"Only GET requests supported");
+			fprintf(stderr,"Only GET requests supported\n");
 			return -4;
 			//close the connection, this is not a GET
 		}
@@ -247,31 +267,26 @@ int handle_server_request(int connfd, request_t *request){
 	}*/
 }
 
-int send_request(int connfd,char *buff, rio_t rio, request_t  *req){
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *method,char *protocol,char *version,char *host,int *server_fd){
 
 	int ret;
 	char sendbuf[MAXLINE];
-	strcat(sendbuf,"GET ");
-	strcat(sendbuf,req->resource);
+	strcat(sendbuf,"GET ");//TODO DOT ISSUE??
+	strcat(sendbuf,resource);
 	strcat(sendbuf," HTTP/1.0\r\n");
 	while((ret = Rio_readlineb(&rio,buff,MAXLINE)) != 0){
 		//fprintf(stdout,"%s\n\n",buff);
 
 		//TODO send GET /hub/index.html HTTP/1.0 first
 		if(ret < 0){
-			fprintf(stderr,"Error reading request in send_request");
+			fprintf(stderr,"Error reading request in send_request\n");
 		}
 		else if(strcmp(buff,"\r\n") == 0){
 			strcat(sendbuf,buff);
 			break;
 		}
 		if(strstr(buff,"Host:") != NULL){
-			//put port if needed
-			/*if(strstr(buff,":%d") == NULL){
-				buff--;
-				strcat(buff,":");
-				strcat(buff,req->port);
-			}*/
+			//strcat(sendbuf,"Host: ");
 			strcat(sendbuf,buff);
 		}
 		else if(strstr(buff,"Proxy-Connection:")){
@@ -289,43 +304,46 @@ int send_request(int connfd,char *buff, rio_t rio, request_t  *req){
 	}
 
 	//send of the request
-	if((req->server_fd = Open_clientfd(req->host,req->port)) == -1){
+	(*server_fd) = Open_clientfd(host,port);
+	if(*(server_fd) == -1){
 		//no connection
 		return -1;
 	}
-	else if(req->server_fd == -2){
+	if((*server_fd )== -2){
 		//tell client you gave me bad stuff
 		strcpy(buff,"BAD REQUEST\n");
 		Rio_writen(connfd,buff,strlen(buff));
 		return -2;
 	}
-	else if(Rio_writen(req->server_fd,sendbuf,strlen(sendbuf)) < 0){
+	else if(Rio_writen((*server_fd),sendbuf,strlen(sendbuf)) < 0){
 		//write failed
 		return -1;
 	}
+	memset(sendbuf,0,strlen(sendbuf));
 	return 0;
 }
 
-int parse_request(request_t *request,char *buff){
+int get_request(char *buff,char *port,char *resource,char *method,char *protocol,char *version,char *host){
 	if(strlen(buff) < 1 || strstr(buff,"/") == NULL){
 		return -1;
 	}
+	char my_url[MAXLINE];
 	//EX GET http://www.cmu.edu/hub/index.html HTTP/1.0
-	strcpy(request->resource,"/");
+	strcpy(resource,"/");
 	//in ordeR: GET,http://www.cmu.edu/hub/index.html,HTTP/1.0
-	sscanf(buff,"%s %s %s",request->method,request->url,request->version);
-	if(strstr(request->url,"://") != NULL){//if there is a url there
+	sscanf(buff,"%s %s %s",method,my_url,version);
+	if(strstr(my_url,"://") != NULL){//if there is a url there
 		//so looking inside the url we are going to grab the below pieces of the URL
 		//in order http,www.cmu.edu,/hub/index.html
-		sscanf(request->url,"%[^:]://%[^/]%s",request->protocol,request->port,request->resource);
+		sscanf(my_url,"%[^:]://%[^/]%s",protocol,port,resource);
 	}
 	else{
-		sscanf(request->url,"%[^/]%s",request->port,request->resource);
+		sscanf(my_url,"%[^/]%s",port,resource);
 	}
 	char *ptr;
-	char * p = request->port;
+	char * p = port;
 	//seperate out the port
-	if((ptr = strstr(request->port,":")) != NULL){
+	if((ptr = strstr(port,":")) != NULL){
 		ptr++;
 		strncpy(p,ptr,sizeof(p));
 	}
@@ -333,12 +351,11 @@ int parse_request(request_t *request,char *buff){
 		memset(p, 0, MAXLINE);
 		strncpy(p,"80",2);
 	}
-	request->server_fd = -1;
 	//get the host name
-	char *t = strstr(request->url,"://");
+	char *t = strstr(my_url,"://");
 	if(t != NULL){
 		t+=3;
-		sscanf(t,"%[^/|^:]",request->host);
+		sscanf(t,"%[^/|^:]",host);
 	}
 	//reset buff
 	memset(buff,0,sizeof(char)*strlen(buff));

@@ -28,13 +28,13 @@ void sbuf_deinit(sbuf_t *sp)
 
 void sbuf_insert(sbuf_t *sp, int item)
 {
-	fprintf(stdout,"For insert:%d\n",item);
-	fflush(stdout);
+	//fprintf(stdout,"For insert:%d\n",item);
+	//fflush(stdout);
     P(&sp->slots);                          /* Wait for available slot */
     P(&sp->mutex);                          /* Lock the buffer */
     sp->buf[(++sp->rear)%(sp->n)] = item;   /* Insert the item */
-    fprintf(stdout,"Insert item:%d\n",item);
-    fflush(stdout);
+    //fprintf(stdout,"Insert item:%d\n",item);
+    //fflush(stdout);
     V(&sp->mutex);                          /* Unlock the buffer */
     V(&sp->items);                          /* Announce available item */
 }
@@ -45,13 +45,13 @@ void sbuf_insert(sbuf_t *sp, int item)
 int sbuf_remove(sbuf_t *sp)
 {
     int item;
-    fprintf(stdout,"For Remove:\n");
-    fflush(stdout);
+    //fprintf(stdout,"For Remove:\n");
+    //fflush(stdout);
     P(&sp->items);                          /* Wait for available item */
     P(&sp->mutex);                          /* Lock the buffer */
     item = sp->buf[(++sp->front)%(sp->n)];  /* Remove the item */
-    fprintf(stdout,"Got item:%d\n",item);
-    fflush(stdout);
+    //fprintf(stdout,"Got item:%d\n",item);
+   // fflush(stdout);
     V(&sp->mutex);                          /* Unlock the buffer */
     V(&sp->slots);                          /* Announce available slot */
     return item;

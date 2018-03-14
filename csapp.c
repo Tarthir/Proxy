@@ -29,33 +29,33 @@
 void unix_error(char *msg) /* Unix-style error */
 {
     fprintf(stderr, "%s: %s\n", msg, strerror(errno));
-    exit(0);
+    //exit(0);
 }
 /* $end unixerror */
 
 void posix_error(int code, char *msg) /* Posix-style error */
 {
     fprintf(stderr, "%s: %s\n", msg, strerror(code));
-    exit(0);
+    //exit(0);
 }
 
 void gai_error(int code, char *msg) /* Getaddrinfo-style error */
 {
     fprintf(stderr, "%s: %s\n", msg, gai_strerror(code));
-    exit(0);
+    ////exit(0);
 }
 
 void app_error(char *msg) /* Application error */
 {
     fprintf(stderr, "%s\n", msg);
-    exit(0);
+    ////exit(0);
 }
 /* $end errorfuns */
 
 void dns_error(char *msg) /* Obsolete gethostbyname error */
 {
     fprintf(stderr, "%s\n", msg);
-    exit(0);
+    //exit(0);
 }
 
 
@@ -273,7 +273,7 @@ ssize_t sio_putl(long v) /* Put long */
 void sio_error(char s[]) /* Put error message and exit */
 {
     sio_puts(s);
-    _exit(1);                                      //line:csapp:sioexit
+    //_exit(1);                                      //line:csapp:sioexit
 }
 /* $end siopublic */
 
@@ -900,7 +900,7 @@ int Rio_writen(int fd, void *usrbuf, size_t n)
 {
 	ssize_t t;
     if ((t = rio_writen(fd, usrbuf, n)) != n){
-    	//unix_error("Rio_writen error");
+    	unix_error("Rio_writen error");
     }
     return t;
 }
@@ -915,7 +915,8 @@ ssize_t Rio_readnb(rio_t *rp, void *usrbuf, size_t n)
     ssize_t rc;
 
     if ((rc = rio_readnb(rp, usrbuf, n)) < 0)
-	//unix_error("Rio_readnb error");
+	unix_error("Rio_readnb error");
+
     return rc;
 }
 
@@ -924,7 +925,8 @@ ssize_t Rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen)
     ssize_t rc;
 
     if ((rc = rio_readlineb(rp, usrbuf, maxlen)) < 0)
-	//unix_error("Rio_readlineb error");
+	unix_error("Rio_readlineb error");
+
     return rc;
 } 
 
@@ -1045,7 +1047,7 @@ int Open_clientfd(char *hostname, char *port)
     int rc;
 
     if ((rc = open_clientfd(hostname, port)) < 0) 
-	//unix_error("Open_clientfd error");
+	unix_error("Open_clientfd error");
     return rc;
 }
 
