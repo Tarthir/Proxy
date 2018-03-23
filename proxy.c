@@ -45,16 +45,16 @@ sbuf_t sbuf;//The buffer for our connections
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-int handle_server_request(int connfd, int *server_fd,char *cache_id,void *cache,unsigned int *cache_len);
+int handle_server_request(int connfd, int *server_fd,char *cache_id,char *cache,unsigned int *cache_len);
 int get_request(char *buff,char *port,char *resource,char *method,char *host);
-int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,void *cache,unsigned int *cache_len);
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,char *cache,unsigned int *cache_len);
 void Cclose(int serverfd, int clientfd);
-int handle_response(int *serverfd,int clientfd,char *cache_id,void *cache);
-int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,void *cache,int *objsize,unsigned *cache_len);
+int handle_response(int *serverfd,int clientfd,char *cache_id,char *cache);
+int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,char *cache,int *objsize,unsigned *cache_len);
 void *thread(void *vargp);
 void do_server_request(int connfd);
-int send_cached_items(int connfd,void *cache,unsigned int cache_len);
-int cache_it(char *buf,int clientfd,int *objsize,void *cache,unsigned int *cache_len,unsigned int num);
+int send_cached_items(int connfd,char *cache,unsigned int cache_len);
+int cache_it(char *buf,int clientfd,int *objsize,char *cache,unsigned int *cache_len,unsigned int num);
 
 
 
@@ -202,7 +202,8 @@ void do_server_request(int connfd){
 	}*/
 }
 /**Sends cached item to client*/
-int send_cached_items(int connfd,void *cache,unsigned int cache_len){
+int send_cached_items(int connfd,char *cache,unsigned int cache_len){
+	//cache = (char *) cache;
 	if(Rio_writen(connfd,cache,cache_len) < 0){
 		return -1;
 	}
@@ -217,7 +218,7 @@ int send_cached_items(int connfd,void *cache,unsigned int cache_len){
  * @param serverfd The server file descriptor
  * @return whether we were succesful or not
  * */
-int handle_server_request(int connfd, int *server_fd,char *cache_id,void *cache,unsigned int *cache_len){
+int handle_server_request(int connfd, int *server_fd,char *cache_id,char *cache,unsigned int *cache_len){
 	//Holds the request items
 	char buff[MAXLINE]; //holds what the client sent us
 	char port[MAXLINE];
@@ -311,7 +312,7 @@ int get_request(char *buff,char *port,char *resource,char *method,char *host){
  * @param server_fd holds the server file descriptor
  * @return whether we were successful or not
  * */
-int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,void *cache,unsigned int *cache_len){
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,char *cache,unsigned int *cache_len){
 
 	int ret;
 	char sendbuf[MAXLINE]; //holds what we are going to send to the server
@@ -389,7 +390,7 @@ int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,cha
  * @param clientfd The client file descriptor
  * @return whether we were successful
  * */
-int handle_response(int *serverfd,int clientfd,char *cache_id,void *cache){
+int handle_response(int *serverfd,int clientfd,char *cache_id,char *cache){
 	rio_t rio;
 	char buf[MAXLINE];
 	int content_size;
@@ -451,7 +452,7 @@ int handle_response(int *serverfd,int clientfd,char *cache_id,void *cache){
  * @param clientfd The client file descriptor
  * @return whether we were successful
  * */
-int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,void *cache,int *objsize,unsigned *cache_len){
+int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,char *cache,int *objsize,unsigned *cache_len){
 	int num;
 	if(content_size > 0){
 		//if the size of the response is too big, send it in chunks
@@ -500,7 +501,7 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,c
 	return 0;
 }
 
-int cache_it(char *buf,int clientfd,int *objsize,void *cache,unsigned int *cache_len,unsigned int num){
+int cache_it(char *buf,int clientfd,int *objsize,char *cache,unsigned int *cache_len,unsigned int num){
 	void *pos;
 	if(*objsize){
 		if(( (*cache_len)+strlen(buf) ) > MAX_OBJECT_SIZE){

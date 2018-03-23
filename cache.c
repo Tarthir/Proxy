@@ -33,11 +33,14 @@ extern void cache_init(){
 	list->remaining_size = MAX_CACHE_SIZE;
 }
 //called by cache_URL()
-CachedItem *init_cache_item(char *URL,void *item,unsigned int size){
+CachedItem *init_cache_item(char *URL,char *item,unsigned int size){
 	CachedItem *it = (CachedItem*) Malloc(sizeof(CachedItem));			/*Malloc for struct*/
 	it->url = (char *) Malloc(sizeof(char) * (strlen(URL)+1));			/*Malloc for url*/
+	strcpy(it->url,URL);												/*Copy into struct*/
 	it->item_p = Malloc(size);											/*Malloc item(response)*/
 	it->size = size;
+	it->next = NULL;
+	it->prev = NULL;
 	memcpy(it->item_p,item,size);										/*Copy data over to struct*/
 	return it;
 }
@@ -59,16 +62,16 @@ extern void add_item(CachedItem * item){
 	}
 }
 //called by user
-extern int cache_URL(char *res_id, void *item, unsigned int size){
+extern int cache_URL(char *res_id, char *item, unsigned int size){
 	if(list != NULL && res_id != NULL && size > 0 && item != NULL){
-		CachedItem *item = NULL;
-		item = init_cache_item(res_id,item,size);
+		CachedItem *it = NULL;
+		it = init_cache_item(res_id,item,size);
 		P(&(list->write));
-		while(list->remaining_size < item->size){
+		while(list->remaining_size < it->size){
 			//evict until space? or clear out?
 		}
 		//add item to cache
-		add_item(item);
+		add_item(it);
 		V(&(list->write));
 	}else{
 		return -1;
@@ -82,7 +85,7 @@ extern void evict(){
 
 }
 
-extern int read_from_cache(char *res_id,void *cache,unsigned int *cache_len){
+extern int read_from_cache(char *res_id,char *cache,unsigned int *cache_len){
 	if (list != NULL){
 		//CachedItem *item = list->first;
 		P(&(list->read));

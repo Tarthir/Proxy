@@ -20,7 +20,7 @@
 
 typedef struct CachedItem {
   char* url;
-  void *item_p;
+  char *item_p;
   unsigned int size;
   struct CachedItem *next;
   struct CachedItem *prev;
@@ -40,10 +40,10 @@ typedef struct CacheList{
 CacheList *list;
 
 extern void cache_init();
-extern int cache_URL(char *res_id, void *item, unsigned int size);
+extern int cache_URL(char *res_id, char *item, unsigned int size);
 extern void evict();
 CachedItem *get_node(char *cache,char *res_id);
-extern int read_from_cache(char *res_id,void *cache,unsigned int *cache_len);
+extern int read_from_cache(char *res_id,char *cache,unsigned int *cache_len);
 //extern CachedItem get_cache(char *URL, CacheList *list);
 extern void move_to_front(char *URL);
 //extern void print_URLs(CacheList *list);
