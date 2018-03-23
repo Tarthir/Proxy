@@ -16,24 +16,23 @@
 #define MAX_OBJECT_SIZE 102400
 
 
-typedef struct CachedItem CachedItem;
+//typedef struct CachedItem CachedItem;
 
-struct CachedItem {
+typedef struct CachedItem {
   char* url;
   void *item_p;
-  size_t size;
-  CachedItem *prev;
-  CachedItem *next;
-};
+  unsigned int size;
+  struct CachedItem *next;
+  struct CachedItem *prev;
+} CachedItem;
 
-typedef struct {
-  size_t size;
+typedef struct CacheList{
   CachedItem* first;
   CachedItem* last;
-  size_t max_size;
   sem_t read;
   sem_t write;
-  size_t remaining_size;
+  unsigned int read_count;
+  unsigned remaining_size;
 } CacheList;
 
 
@@ -41,9 +40,10 @@ typedef struct {
 CacheList *list;
 
 extern void cache_init();
-extern void cache_URL(char *URL, void *item, size_t size);
+extern int cache_URL(char *res_id, void *item, unsigned int size);
 extern void evict();
-extern CachedItem *find(char *URL);
+CachedItem *get_node(char *cache,char *res_id);
+extern int read_from_cache(char *res_id,void *cache,unsigned int *cache_len);
 //extern CachedItem get_cache(char *URL, CacheList *list);
 extern void move_to_front(char *URL);
 //extern void print_URLs(CacheList *list);

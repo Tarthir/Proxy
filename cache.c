@@ -27,39 +27,42 @@ extern void cache_init(){
 	list = (CacheList*) malloc(sizeof(CacheList));
 	list->first = NULL;
 	list->last = NULL;
-	list->size = 0;
-	Sem_init(&list->read,0,1);
+	list->read_count = 0;
+	Sem_init(&list->read,0,1); //TODO more then one reader
 	Sem_init(&list->write,0,1);
-	list->max_size = MAX_CACHE_SIZE;
-	list->remaining_size = 0;
+	list->remaining_size = MAX_CACHE_SIZE;
 }
-
-CachedItem *init_cache_item(char *URL,void *item,size_t size){
-	CachedItem *it = (CachedItem*) Malloc(sizeof(CachedItem));
-	it->url = URL;
-	it->item_p = item;
+//called by cache_URL()
+CachedItem *init_cache_item(char *URL,void *item,unsigned int size){
+	CachedItem *it = (CachedItem*) Malloc(sizeof(CachedItem));			/*Malloc for struct*/
+	it->url = (char *) Malloc(sizeof(char) * (strlen(URL)+1));			/*Malloc for url*/
+	it->item_p = Malloc(size);											/*Malloc item(response)*/
 	it->size = size;
+	memcpy(it->item_p,item,size);										/*Copy data over to struct*/
 	return it;
 }
-void add_item(CachedItem * item){
-	//add to head
-	if(list->first == NULL){
-		list->first = item;
-		list->last = item;
+extern void add_item(CachedItem * item){
+	if(list != NULL){
+		//add to head
+		if(list->first == NULL){
+			list->first = item;
+			list->last = item;
+		}
+		//add to tail
+		else{
+			list->last->next = item;
+			item->prev = list->last;
+			list->last = item;
+		}
+		//list->size += item.size;
+		list->remaining_size -= item->size;
 	}
-	//add to tail
-	else{
-		list->last->next = item;
-		item->prev = list->last;
-	}
-	//list->size += item.size;
-	list->remaining_size -= item->size;
 }
-
-extern void cache_URL(char *URL, void *item, size_t size){
-	if(list != NULL && URL != NULL && size > 0 && item != NULL){
+//called by user
+extern int cache_URL(char *res_id, void *item, unsigned int size){
+	if(list != NULL && res_id != NULL && size > 0 && item != NULL){
 		CachedItem *item = NULL;
-		item = init_cache_item(URL,item,size);
+		item = init_cache_item(res_id,item,size);
 		P(&(list->write));
 		while(list->remaining_size < item->size){
 			//evict until space? or clear out?
@@ -67,7 +70,10 @@ extern void cache_URL(char *URL, void *item, size_t size){
 		//add item to cache
 		add_item(item);
 		V(&(list->write));
+	}else{
+		return -1;
 	}
+	return 0;
 }
 
 
@@ -76,22 +82,56 @@ extern void evict(){
 
 }
 
-extern CachedItem *find(char *URL){
+extern int read_from_cache(char *res_id,void *cache,unsigned int *cache_len){
 	if (list != NULL){
-		CachedItem *item = list->first;
-		P(&(list->write));//lock
-		while(item != NULL){
-			if (strcmp(URL,item->url) == 0){
-				return item;
+		//CachedItem *item = list->first;
+		P(&(list->read));
+		(list->read_count)++;
+		if(list->read_count == 1){
+			P(&(list->write));//lock
+		}
+		V(&(list->read));//unlock read
+		CachedItem *item = get_node(cache,res_id);
+		if(item != NULL){
+			*cache_len = item->size;
+			memcpy(cache,item->item_p,*cache_len);
+			P(&(list->read));
+			(list->read_count)--;
+			if(list->read_count == 0){
+				V(&(list->write));
 			}
-			item = item->next;
+			V(&(list->read));
+			return 0;
+			//DO I NEED TO MOVE THE ITEM?
+		}
+		else{
+			//This data has never been cached
+			P(&(list->read));
+			(list->read_count)--; //decrement
+			if(list->read_count == 0){
+				V(&(list->write));
+			}
+			V(&(list->read));
+			return -1; //Nothing was found
 		}
 		V(&(list->write));//release
 	}
-	return NULL;
+	return 0;
 
 }
 
+CachedItem *get_node(char *cache,char *res_id){
+	if(cache != NULL){
+		CachedItem *curr = list->first;
+		while(curr != NULL){
+			if(strcmp(res_id,curr->url) == 0){
+				return curr;
+			}
+			curr = curr->next;
+		}
+	}
+	return NULL;
+}
 
 extern void move_to_front(char *URL){
 
