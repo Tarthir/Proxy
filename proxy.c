@@ -1,10 +1,8 @@
 #include <stdio.h>
 #include "csapp.h"
 #include "sbuf.h"
-
-/* Recommended max cache and object sizes */
-#define MAX_CACHE_SIZE 1049000
-#define MAX_OBJECT_SIZE 102400
+#include "logger.h"
+#include "cache.h"
 
 #define NUM_OF_THREADS 3
 #define SBUFFSIZE 3
@@ -23,6 +21,24 @@ typedef struct sockaddr SA;
 	char host[MAXLINE];
 	int server_fd;
 }request_t;*/
+
+//TODO Create logger class
+/**
+ * Logger thread will log web accesses and requests to a file
+ * It will need to do so one message at a time. Have worker threads
+ * call a function which will begin the logging. The logging thread will be pre-created and waiting
+ * The callee thread will put the message into a log queue(possibly need a lock), the logger thread will then dequeue as it goes
+ * and write messages to the appropriate file
+//TODO caching
+ * We will have a cache class which will store data, being keyed by a request(resource/host/port/etc)
+ * When we have read the entire server's response we will attempt to cache it. If there is room we will store all the data.
+ * Every cached object will have a timestamp(?) which will determine the last time it was used. If when we try to write to
+ * the buffer we find that it is full we will then evict the last thing we wrote to the buffer and try again, keep trying until
+ * success
+ *
+ * We will need to setup locks such that only one thread can write to the cache at a time, BUT multiple threads can read at once
+ * See slides for details on how to do so
+ */
 
 sbuf_t sbuf;//The buffer for our connections
 
@@ -67,6 +83,12 @@ int main(int argc, char **argv)
 	else{
 		listenfd = Open_listenfd(argv[1]);
 		sbuf_init(&sbuf,SBUFFSIZE); /**Was told it was okay to use this class by TA*/
+//		cache_init();
+//		char * i = "123";
+//		char * j = "abc";
+//		size_t s = 10;
+		//cache_URL(i, j, s);
+		logger_init();
 		//create the threads ahead of time to be put in pool
 		for(int i =0; i < NUM_OF_THREADS; i++){
 			Pthread_create(&tid,NULL,thread,NULL);
@@ -139,11 +161,11 @@ void do_server_request(int connfd){
 	//handles parsing/reading/sending of client request to server
 	if((val = handle_server_request(connfd,&server_fd)) < 0){
 		if(val == -4){
-			fprintf(stderr,"Only Get request supported\n");
+			logg("Only Get request supported\n");
 
 		}
 		else{
-			fprintf(stderr,"An error occurred in handling request\n");
+			logg("An error occurred in handling request\n");
 		}
 		Cclose(server_fd,connfd);
 		//return val;
@@ -152,10 +174,10 @@ void do_server_request(int connfd){
 	//handles the parsing/reading/sending of server response to client
 	else if(val == 0 && handle_response(&server_fd,connfd) < 0){
 		if(val == -3){
-			fprintf(stderr,"An error while writing to client\n");
+			logg("An error while writing to client\n");
 		}
 		else{
-			fprintf(stderr,"An error occurred in reading from server\n");
+			logg("An error occurred in reading from server\n");
 		}
 		Cclose(server_fd,connfd);
 		//return val;
@@ -184,13 +206,13 @@ int handle_server_request(int connfd, int *server_fd){
 	//grab the first line of the get request
 	//EX: GET http://www.cmu.edu/hub/index.html HTTP/1.1
 	if(Rio_readlineb(&rio,buff,MAXLINE) < 0){
-		fprintf(stderr,"An error accord in handle_request\n");
+		logg("An error accord in handle_request\n");
 		return -1;
 	}
 	else{
 		//parse through the request
 		if(get_request(buff,port,resource,method,host) < 0){
-			fprintf(stderr,"An error accord in parse_request\n");
+			logg("An error accord in parse_request\n");
 			return -1;
 		}
 		//send off the request
@@ -198,7 +220,7 @@ int handle_server_request(int connfd, int *server_fd){
 			return send_request(connfd,buff,rio,port,resource,host,server_fd);
 		}
 		else{
-			fprintf(stderr,"Only GET requests supported\n");
+			logg("Only GET requests supported\n");
 			return -4;
 			//this is not a GET
 		}
@@ -275,7 +297,7 @@ int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,cha
 	while((ret = Rio_readlineb(&rio,buff,MAXLINE)) != 0){
 		//while there is more to read (until \r\n) replace things as needed and add everything to sendbuf
 		if(ret < 0){
-			fprintf(stderr,"Error reading request in send_request\n");
+			logg("Error reading request in send_request\n");
 		}
 		else if(strcmp(buff,"\r\n") == 0){
 			strcat(sendbuf,buff);
@@ -303,6 +325,11 @@ int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,cha
 	if(*(server_fd) == -1){
 		//no connection
 		return -1;
+	}
+	else{//if opening connection succeeded
+		strcat(host,":");
+		strcat(host,port);
+		logg(host);
 	}
 	if((*server_fd )== -2){
 		//tell client you gave me bad stuff

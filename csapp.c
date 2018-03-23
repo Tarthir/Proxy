@@ -443,6 +443,7 @@ void *Malloc(size_t size)
 
     if ((p  = malloc(size)) == NULL)
 	unix_error("Malloc error");
+
     return p;
 }
 
