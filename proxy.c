@@ -211,7 +211,7 @@ int send_cached_items(int connfd,char *cache,unsigned int cache_len){
 		return 0;
 	}
 }
-
+//TODO MIGHT BE MISSING A FEW BYTES OFF THE END OF SOME ITEMS, CHECK THIS
 /**
  * Parses through and sends off the client request to the server
  * @oaram connfd The client file descriptor
