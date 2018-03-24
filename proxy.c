@@ -5,6 +5,7 @@
 #include "cache.h"
 
 #define NUM_OF_THREADS 3
+#define DO_CACHE 10
 #define SBUFFSIZE 3
 #define	MAXLINE	 8192  /* Max text line length */
 #define MAXBUF   8192  /* Max I/O buffer size */
@@ -44,14 +45,16 @@ sbuf_t sbuf;//The buffer for our connections
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
-int handle_server_request(int connfd, int *server_fd);
+int handle_server_request(int connfd, int *server_fd,char *cache_id,char *cache,unsigned int *cache_len);
 int get_request(char *buff,char *port,char *resource,char *method,char *host);
-int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd);
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,char *cache,unsigned int *cache_len);
 void Cclose(int serverfd, int clientfd);
-int handle_response(int *server_fd,int clientfd);
-int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd);
+int handle_response(int *serverfd,int clientfd,char *cache_id,char *cache);
+int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,char *cache,int *objsize,unsigned *cache_len);
 void *thread(void *vargp);
 void do_server_request(int connfd);
+int send_cached_items(int connfd,char *cache,unsigned int cache_len);
+int cache_it(char *buf,int clientfd,int *objsize,char *cache,unsigned int *cache_len,unsigned int num);
 
 
 
@@ -83,10 +86,10 @@ int main(int argc, char **argv)
 	else{
 		listenfd = Open_listenfd(argv[1]);
 		sbuf_init(&sbuf,SBUFFSIZE); /**Was told it was okay to use this class by TA*/
-//		cache_init();
-//		char * i = "123";
-//		char * j = "abc";
-//		size_t s = 10;
+		cache_init();
+		//		char * i = "123";
+		//		char * j = "abc";
+		//		size_t s = 10;
 		//cache_URL(i, j, s);
 		logger_init();
 		//create the threads ahead of time to be put in pool
@@ -158,8 +161,12 @@ void *thread(void *vargp){
 void do_server_request(int connfd){
 	int server_fd = -1;
 	int val;
+	char cache[MAX_OBJECT_SIZE];
+	char cache_id[MAXLINE];
+	unsigned int cache_len;
+
 	//handles parsing/reading/sending of client request to server
-	if((val = handle_server_request(connfd,&server_fd)) < 0){
+	if((val = handle_server_request(connfd,&server_fd,cache_id,cache,&cache_len)) < 0){
 		if(val == -4){
 			logg("Only Get request supported\n");
 
@@ -168,11 +175,19 @@ void do_server_request(int connfd){
 			logg("An error occurred in handling request\n");
 		}
 		Cclose(server_fd,connfd);
-		//return val;
+		return;
+	}
+	//read items from cache and send
+	else if(val == DO_CACHE){
+		if(send_cached_items(connfd,cache,cache_len) < 0){
+			logg("Error sending cache to client");
+			Cclose(server_fd,connfd);
+			return;
+		}
 	}
 	//if everything worked
-	//handles the parsing/reading/sending of server response to client
-	else if(val == 0 && handle_response(&server_fd,connfd) < 0){
+	//handles the parsing/reading/sending of server response to client/caches
+	else if(val == 0 && handle_response(&server_fd,connfd,cache_id,cache) < 0){
 		if(val == -3){
 			logg("An error while writing to client\n");
 		}
@@ -180,20 +195,30 @@ void do_server_request(int connfd){
 			logg("An error occurred in reading from server\n");
 		}
 		Cclose(server_fd,connfd);
-		//return val;
+		return;
 	}
 	/*else{
 		Cclose(server_fd,connfd);
 	}*/
 }
-
+/**Sends cached item to client*/
+int send_cached_items(int connfd,char *cache,unsigned int cache_len){
+	//cache = (char *) cache;
+	if(Rio_writen(connfd,cache,cache_len) < 0){
+		return -1;
+	}
+	else{
+		return 0;
+	}
+}
+//TODO MIGHT BE MISSING A FEW BYTES OFF THE END OF SOME ITEMS, CHECK THIS
 /**
  * Parses through and sends off the client request to the server
  * @oaram connfd The client file descriptor
  * @param serverfd The server file descriptor
  * @return whether we were succesful or not
  * */
-int handle_server_request(int connfd, int *server_fd){
+int handle_server_request(int connfd, int *server_fd,char *cache_id,char *cache,unsigned int *cache_len){
 	//Holds the request items
 	char buff[MAXLINE]; //holds what the client sent us
 	char port[MAXLINE];
@@ -201,7 +226,7 @@ int handle_server_request(int connfd, int *server_fd){
 	char method[MAXLINE];
 	char host[MAXLINE];
 	rio_t rio;
-
+	memset(cache,0,MAX_OBJECT_SIZE);
 	Rio_readinitb(&rio,connfd);
 	//grab the first line of the get request
 	//EX: GET http://www.cmu.edu/hub/index.html HTTP/1.1
@@ -217,7 +242,7 @@ int handle_server_request(int connfd, int *server_fd){
 		}
 		//send off the request
 		else if(strstr(method,"GET") != NULL){
-			return send_request(connfd,buff,rio,port,resource,host,server_fd);
+			return send_request(connfd,buff,rio,port,resource,host,server_fd,cache_id,cache,cache_len);
 		}
 		else{
 			logg("Only GET requests supported\n");
@@ -287,11 +312,11 @@ int get_request(char *buff,char *port,char *resource,char *method,char *host){
  * @param server_fd holds the server file descriptor
  * @return whether we were successful or not
  * */
-int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd){
+int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,char *host,int *server_fd,char *cache_id,char *cache,unsigned int *cache_len){
 
 	int ret;
 	char sendbuf[MAXLINE]; //holds what we are going to send to the server
-	strcat(sendbuf,"GET ");//TODO DOT ISSUE??
+	strcat(sendbuf,"GET ");
 	strcat(sendbuf,resource);
 	strcat(sendbuf," HTTP/1.0\r\n");
 	while((ret = Rio_readlineb(&rio,buff,MAXLINE)) != 0){
@@ -319,33 +344,45 @@ int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,cha
 			strcat(sendbuf,buff);
 		}
 	}
-
-	//send off the request
-	(*server_fd) = Open_clientfd(host,port);
-	if(*(server_fd) == -1){
-		//no connection
-		return -1;
+	//Make the id for the cache
+	strcpy(cache_id,"GET");
+	strcat(cache_id," ");
+	strcat(cache_id,host);
+	strcat(cache_id,":");
+	strcat(cache_id,port);
+	strcat(cache_id," ");
+	strcat(cache_id,resource);
+	//see if we have already cached it
+	if(read_from_cache(cache_id,cache,cache_len) != -1){
+		return DO_CACHE;
 	}
-	else{//if opening connection succeeded
-		strcat(host,":");
-		strcat(host,port);
-		logg(host);
+	else{
+		//send off the request
+		(*server_fd) = Open_clientfd(host,port);
+		if(*(server_fd) == -1){
+			//no connection
+			return -1;
+		}
+		else{//if opening connection succeeded
+			strcat(host,":");
+			strcat(host,port);
+			logg(host);
+		}
+		if((*server_fd )== -2){
+			//tell client you gave me bad stuff
+			strcpy(buff,"BAD REQUEST\n");
+			Rio_writen(connfd,buff,strlen(buff));
+			return -2;
+		}
+		else if(Rio_writen((*server_fd),sendbuf,strlen(sendbuf)) < 0){
+			//write failed
+			return -1;
+		}
+		//reset
+		memset(sendbuf,0,strlen(sendbuf));
 	}
-	if((*server_fd )== -2){
-		//tell client you gave me bad stuff
-		strcpy(buff,"BAD REQUEST\n");
-		Rio_writen(connfd,buff,strlen(buff));
-		return -2;
-	}
-	else if(Rio_writen((*server_fd),sendbuf,strlen(sendbuf)) < 0){
-		//write failed
-		return -1;
-	}
-	//reset
-	memset(sendbuf,0,strlen(sendbuf));
 	return 0;
 }
-
 
 /**
  * Handles the parsing/reading/sending off of the response from the server
@@ -353,10 +390,13 @@ int send_request(int connfd,char *buff, rio_t rio, char *port,char *resource,cha
  * @param clientfd The client file descriptor
  * @return whether we were successful
  * */
-int handle_response(int *serverfd,int clientfd){
+int handle_response(int *serverfd,int clientfd,char *cache_id,char *cache){
 	rio_t rio;
 	char buf[MAXLINE];
 	int content_size;
+	unsigned cache_len = 0;
+	int objsize = 1;
+
 	//init the struct
 	Rio_readinitb(&rio,(*serverfd));
 	//grab first line
@@ -364,45 +404,55 @@ int handle_response(int *serverfd,int clientfd){
 		return -1;
 	}
 	//send off first line
-	else if(Rio_writen(clientfd,buf,strlen(buf)) < 0){
+	/*if(Rio_writen(clientfd,buf,strlen(buf)) < 0){
 		return -3;
-	}
+	}*/
 	else{
-		//while we don't hit the end of headers
-		while(strcmp(buf,"\r\n") != 0 && strlen(buf) > 0){
+		if(cache_it(buf,clientfd,&objsize,cache,&cache_len,strlen(buf))< 0){
+			return -1;
+		}
+		else{
+			//while we don't hit the end of headers
+			while(strcmp(buf,"\r\n") != 0 && strlen(buf) > 0){
 
-			if(Rio_readlineb(&rio,buf,MAXLINE) < 0){
-				return -1;
-			}
-			else{
-				//grab the content size
-				if(strstr(buf,"Content-Length")){
-					sscanf(buf,"Content-Length: %d",&content_size);
+				if(Rio_readlineb(&rio,buf,MAXLINE) < 0){
+					return -1;
 				}
-				//it sometimes has a lower case l
-				else if(strstr(buf,"Content-length")){
-					sscanf(buf,"Content-length: %d",&content_size);
+				else{
+					//grab the content size
+					if(strstr(buf,"Content-Length")){
+						sscanf(buf,"Content-Length: %d",&content_size);
+					}
+					//it sometimes has a lower case l
+					else if(strstr(buf,"Content-length")){
+						sscanf(buf,"Content-length: %d",&content_size);
+					}
 				}
-			}
-			//write it all to client
-			if(Rio_writen(clientfd,buf,strlen(buf)) < 0){
-				return -3;
+				if(cache_it(buf,clientfd,&objsize,cache,&cache_len,strlen(buf)) < 0){
+					return -1;
+				}
+				/*//write it all to client
+				if(Rio_writen(clientfd,buf,strlen(buf)) < 0){
+					return -3;
+				}*/
 			}
 		}
+		read_and_send_response(&rio,content_size,buf,clientfd,cache_id,cache,&objsize,&cache_len);
 	}
 	//now handle the body
-	return read_and_send_response(&rio,content_size,buf,clientfd);
+	//return read_and_send_response(&rio,content_size,buf,clientfd);
+	return 0;
 }
 
 /**
- * Handles the reading and sending of the response to client
+ * Handles the reading and sending of the response to client, as well as caching
  * @param rio The struct which helps us read line by line
  * @param content_size Holds the amount we need to read
  * @param buf The temp buffer we are putting the things we read in before it is sent
  * @param clientfd The client file descriptor
  * @return whether we were successful
  * */
-int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd){
+int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,char *cache_id,char *cache,int *objsize,unsigned *cache_len){
 	int num;
 	if(content_size > 0){
 		//if the size of the response is too big, send it in chunks
@@ -410,9 +460,12 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd){
 			if((num = Rio_readnb(rio,buf,MAXLINE)) < 0){
 				return -1;
 			}
-			else if(Rio_writen(clientfd,buf,num) == -1){
+			else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
 				return -1;
 			}
+			/*else if(Rio_writen(clientfd,buf,num) == -1){
+				return -1;
+			}*/
 			else{
 				content_size = content_size - MAXLINE;
 			}
@@ -422,7 +475,10 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd){
 			if(Rio_readnb(rio,buf,content_size) < 0){
 				return -1;
 			}
-			else if(Rio_writen(clientfd,buf,content_size) < 0){
+			/*else if(Rio_writen(clientfd,buf,content_size) < 0){
+				return -1;
+			}*/
+			else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
 				return -1;
 			}
 		}
@@ -431,10 +487,36 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd){
 	else{
 		//read anything that is there and send
 		while((num = Rio_readlineb(rio,buf,MAXLINE))){
-			if(Rio_writen(clientfd,buf,num) < 0){
+			/*if(Rio_writen(clientfd,buf,num) < 0){
+				return -1;
+			}*/
+			if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
 				return -1;
 			}
 		}
+	}
+	if(objsize && (cache_URL(cache_id,cache,*cache_len))< 0){
+		return -1;
+	}
+	return 0;
+}
+
+int cache_it(char *buf,int clientfd,int *objsize,char *cache,unsigned int *cache_len,unsigned int num){
+	void *pos;
+	if(*objsize){
+		if(( (*cache_len)+strlen(buf) ) > MAX_OBJECT_SIZE){
+			*objsize = 0;
+		}
+		else{
+			pos = (void *)((char*)cache + *cache_len);
+			memcpy(pos,buf,strlen(buf));
+			*cache_len += strlen(buf);
+			*objsize = 1;
+		}
+	}
+	//send off
+	if(Rio_writen(clientfd,buf,num) < 0){
+		return -1;
 	}
 	return 0;
 }

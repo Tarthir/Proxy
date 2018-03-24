@@ -28,13 +28,9 @@ void sbuf_deinit(sbuf_t *sp)
 
 void sbuf_insert(sbuf_t *sp, int item)
 {
-	//fprintf(stdout,"For insert:%d\n",item);
-	//fflush(stdout);
     P(&sp->slots);                          /* Wait for available slot */
     P(&sp->mutex);                          /* Lock the buffer */
     sp->buf[(++sp->rear)%(sp->n)] = item;   /* Insert the item */
-    //fprintf(stdout,"Insert item:%d\n",item);
-    //fflush(stdout);
     V(&sp->mutex);                          /* Unlock the buffer */
     V(&sp->items);                          /* Announce available item */
 }

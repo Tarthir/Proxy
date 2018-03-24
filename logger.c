@@ -147,11 +147,11 @@ void clear_logger(){
 
 void logg(char *message){
 	if(loglist != NULL){
-		LogItem *item;
-		log_item_init(&item,message);
+		//LogItem *item;
+		//log_item_init(&item,message);
 		//insert item into logger which will alert log thread that something is there(like with sbuf)
 		//logger will then grab it out of the queue and write it
-		logger_insert(item);
+		//logger_insert(item);
 	}
 	else{
 		fprintf(stderr,"Logger is not initialized");
