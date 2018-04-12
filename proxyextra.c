@@ -73,7 +73,7 @@ int cache_it(char *buf,char *cache,unsigned int *cache_len);
 void add_event(int connfd,int state);
 struct list_node *getNode(int idx);
 int send_request(struct list_node *node);
-void create_event(int efd,int fd,struct epoll_event event,int macro);
+void create_event(int efd,int fd,struct epoll_event *event,int macro);
 
 
 list_node *init_list_node(int connfd,int state){
@@ -178,16 +178,15 @@ int main(int argc, char **argv)
 				// loop and get all the connections that are available
 				while ((connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen)) > 0) {
 
-					create_event(efd,connfd, event,EPOLLIN);
+					create_event(efd,connfd, &event,EPOLLIN);
 					add_event(event.data.fd,READ_REQUEST);
 				}
 
 				if (errno == EWOULDBLOCK || errno == EAGAIN) {
 					// no more clients to accept()
 				} else {
-					perror("error accepting");
+					perror("error accepting\n");
 				}
-				//TODO this is where you do stuff
 			} else if (my_list->size > 0 && n > 0){ //line:conc:select:listenfdready
 				int ret;
 				list_node *node = getNode(i-1);//TODO get by file drescriptor not by i
@@ -196,22 +195,22 @@ int main(int argc, char **argv)
 					if((ret = do_server_request(node)) >= 0){
 						// TODO if there is stuff in the cache, you need to SEND_RESPONSE
 						node->state = SEND_REQUEST;
-						create_event(efd,node->serverfd, event,EPOLLOUT);
+						create_event(efd,node->serverfd, &event,EPOLLOUT);
 					}
 					else{
 						//TODO do something(print?)
-						fprintf(stdout,"An Error occurred while reading from client");
+						fprintf(stdout,"An Error occurred while reading from client\n");
 					}
 				}
 				else if(node->state == SEND_REQUEST){
 					ret = send_request(node);
 					if(ret >= 0){
 						node->state = READ_RESPONSE;
-						memset(node->buffer,MAXLINE,0);
-						memset(node->sendbuff,MAXLINE,0);
+						memset(node->buffer,0,MAXLINE);
+						memset(node->sendbuff,0,MAXLINE);
 					}
 					else{
-						fprintf(stdout,"An Error occurred while writing to server");
+						fprintf(stdout,"An Error occurred while writing to server\n");
 					}
 				}
 				else if(node->state == READ_RESPONSE){
@@ -220,7 +219,7 @@ int main(int argc, char **argv)
 						node->state = SEND_RESPONSE;
 					}
 					else{
-						fprintf(stdout,"An Error occurred while reading response from server");
+						fprintf(stdout,"An Error occurred while reading response from server\n");
 					}
 				}
 				else if(node->state == SEND_RESPONSE){
@@ -229,7 +228,7 @@ int main(int argc, char **argv)
 						//TODO FREE MEMORY
 					}
 					else{
-						fprintf(stdout,"An Error occurred while sending server response to client");
+						fprintf(stdout,"An Error occurred while sending server response to client\n");
 					}
 				}
 			}
@@ -242,7 +241,7 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-void create_event(int efd,int fd,struct epoll_event event,int macro){
+void create_event(int efd,int fd,struct epoll_event *event,int macro){
 	// set fd to non-blocking (set flags while keeping existing flags)
 
 	if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
@@ -251,9 +250,9 @@ void create_event(int efd,int fd,struct epoll_event event,int macro){
 	}
 
 	// add event to epoll file descriptor
-	event.data.fd = fd;
-	event.events = macro | EPOLLET; // use edge-triggered monitoring
-	if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &event) < 0) {
+	(*event).data.fd = fd;
+	(*event).events = macro | EPOLLET; // use edge-triggered monitoring
+	if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, event) < 0) {
 		fprintf(stderr, "error adding event\n");
 		//exit(1);
 	}
@@ -634,7 +633,25 @@ int read_response(struct list_node *node){
 		}
 	}
 	//now handle the body
+	if(data->content_size < 0){
+		//read anything that is there and send
+		//while((num = Rio_readlineb(rio,buf,MAXLINE))){
+		/*if(Rio_writen(clientfd,buf,num) < 0){
+						return -1;
+					}*/
+//		if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
+//			return -1;
+//		}
+	}
 
+	else{
+		while(data->content_size > MAXLINE){
+
+		}
+	}
+//	if(objsize && (cache_URL(cache_id,cache,*cache_len))< 0){
+//		return -1;
+//	}
 
 	//return read_and_send_response(&rio,content_size,buf,clientfd);
 	return 0;
@@ -657,9 +674,9 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,c
 			if((num = Rio_readnb(rio,buf,MAXLINE)) < 0){
 				return -1;
 			}
-			else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
-				return -1;
-			}
+			//else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
+				//return -1;
+			//}
 			/*else if(Rio_writen(clientfd,buf,num) == -1){
 				return -1;
 			}*/
@@ -675,9 +692,9 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,c
 			/*else if(Rio_writen(clientfd,buf,content_size) < 0){
 				return -1;
 			}*/
-			else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
-				return -1;
-			}
+//			else if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
+//				return -1;
+//			}
 		}
 	}
 	//no response
@@ -687,9 +704,9 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,c
 			/*if(Rio_writen(clientfd,buf,num) < 0){
 				return -1;
 			}*/
-			if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
-				return -1;
-			}
+//			if(cache_it(buf,clientfd,objsize,cache,cache_len,num) < 0){
+//				return -1;
+//			}
 		}
 	}
 	if(objsize && (cache_URL(cache_id,cache,*cache_len))< 0){
@@ -701,15 +718,15 @@ int read_and_send_response(rio_t *rio, int content_size,char *buf,int clientfd,c
 int cache_it(char *buf,char *cache,unsigned int *cache_len){
 	void *pos;
 	//if(*objsize){
-		//if(( (*cache_len)+strlen(buf) ) > MAX_OBJECT_SIZE){
-		//	*objsize = 0;
-		//}
-		//else{
-			pos = (void *)((char*)cache + *cache_len);
-			memcpy(pos,buf,strlen(buf));
-			*cache_len += strlen(buf);
-			//*objsize = 1;
-		//}
+	//if(( (*cache_len)+strlen(buf) ) > MAX_OBJECT_SIZE){
+	//	*objsize = 0;
+	//}
+	//else{
+	pos = (void *)((char*)cache + *cache_len);
+	memcpy(pos,buf,strlen(buf));
+	*cache_len += strlen(buf);
+	//*objsize = 1;
+	//}
 	//}
 	//send off
 	//	if(Rio_writen(clientfd,buf,num) < 0){
