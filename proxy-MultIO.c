@@ -117,7 +117,7 @@ int main(int argc, char **argv)
 		//have threads go to a function that detaches them and handles requests
 		while (1) {
 			n = epoll_wait(efd,events,MAXEVENTS,1000);
-			fprintf(stdout,"n is: %d\n",n);
+			fprintf(stdout,"n is: %lu\n",n);
 			//if(n == 0){continue;}
 			for(i = 0; i < n; i++){
 				if((events[i].events & EPOLLERR) ||(events[i].events & EPOLLHUP)||(events[i].events & EPOLLRDHUP)){
@@ -164,7 +164,9 @@ int main(int argc, char **argv)
 					}
 				}
 				else if(node->state == SEND_REQUEST){
+					//fprintf(stdout,"sending to server: %s",node->sendbuff);
 					ret = send_data(node->serverfd,node->sendbuff,&node->bytes_sent);
+					//fprintf(stdout,"sent to server: %d",node->bytes_sent);
 					if(ret >= 0){
 						create_event(efd,node->serverfd,&event,EPOLLIN,1);
 						node->state = READ_RESPONSE;
@@ -195,6 +197,7 @@ int main(int argc, char **argv)
 					else{
 						ret = send_data(node->connfd,node->buffer,&node->bytes_sent);
 					}
+					fprintf(stdout,"sent to client: %d",node->bytes_sent);
 					if(ret >= 0){
 						//read everything
 						Cclose(node->serverfd,node->connfd);
@@ -499,12 +502,15 @@ int read_response(struct list_node *node){
 	int objsize = 1;
 	int len = 0;
 	data_struct *data = (data_struct*)node->data;
-
+	//TODO need to read the headers first? Then read again i guess
 	while((len = recv(node->serverfd,buf,MAXLINE,MSG_DONTWAIT)) != 0){
+		fprintf(stdout,"reading %d bytes\n",len);
 		if(len < 0){
 			if((errno == EAGAIN || errno == EWOULDBLOCK || EPIPE)){
+				fprintf(stdout,"got errno\n");
 				return 0; //TODO may not want to do this
 			}
+			fprintf(stdout,"no errno\n");
 			return len;
 		}
 		if(cache_it(&objsize,buf,data->cache,&data->cache_len) < 0){
@@ -514,7 +520,7 @@ int read_response(struct list_node *node){
 	if(objsize){
 		cache_URL(data->cache_id,data->cache,data->cache_len);
 	}
-
+	fprintf(stdout,"exited normal: read_response\n");
 	return 0;
 }
 
@@ -523,6 +529,7 @@ int send_data(int fd, char *buffer,int *bytes_sent){
 	int len = 0;
 	//size_t t = strlen(node->sendbuff);
 	while((len = send(fd,buffer,strlen(buffer),MSG_DONTWAIT)) != 0){
+		fprintf(stdout,"Sent %d bytes\n",len);
 		if(len < 0){
 			//if there is nothing more to read for now
 			if((errno == EAGAIN || errno == EWOULDBLOCK || EPIPE)){
